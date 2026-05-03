@@ -9,8 +9,9 @@ description: >
 inputs:
   needs:
     description: >
-      JSON serialization of the calling job's `needs` context. Pass
-      `${{ toJson(needs) }}` from the caller.
+      JSON serialization of the calling job's needs context. Pass
+      toJson(needs) from the caller, wrapped in the standard expression
+      delimiters.
     required: true
 
 runs:
