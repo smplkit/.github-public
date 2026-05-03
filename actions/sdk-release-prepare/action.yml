@@ -1,0 +1,96 @@
+name: SDK Release Prepare
+description: >
+  Common release-scaffolding for the smplkit SDKs. On a normal push, runs
+  semantic-release to compute the next version and create a tag + GitHub
+  release based on conventional commits. On a manual dispatch with
+  `manual_version` set, skips semantic-release and creates the tag + release
+  directly at GITHUB_SHA. Outputs `released` ("true"/"false") and `version`
+  (semver, no `v` prefix) so the calling workflow can run a language-specific
+  publish step conditionally.
+
+inputs:
+  manual_version:
+    description: >
+      Optional semver string (no `v` prefix) to publish directly, skipping
+      semantic-release. When empty, semantic-release decides whether to
+      release based on conventional commits since the last tag.
+    required: false
+    default: ""
+  github_token:
+    description: GitHub token with `contents: write` to create tags and releases.
+    required: true
+
+outputs:
+  released:
+    description: '"true" if a new tag/release was created during this run, otherwise "false".'
+    value: ${{ steps.check.outputs.released }}
+  version:
+    description: 'The released semver string (no `v` prefix). Only meaningful when `released` is "true".'
+    value: ${{ steps.check.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      if: inputs.manual_version == ''
+      uses: actions/setup-node@v6
+      with:
+        node-version-file: ".nvmrc"
+
+    - name: Record latest tag before release
+      id: before
+      shell: bash
+      run: echo "tag=$(git describe --tags --abbrev=0 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+
+    - name: Run semantic-release
+      if: inputs.manual_version == ''
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: npx --yes semantic-release
+
+    - name: Manual tag and release (override path)
+      if: inputs.manual_version != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        VERSION: ${{ inputs.manual_version }}
+      run: |
+        if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          echo "::error::manual_version '${VERSION}' is not a valid semver string."
+          exit 1
+        fi
+        if gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/v${VERSION}" >/dev/null 2>&1; then
+          echo "::error::Tag v${VERSION} already exists. Refusing to overwrite."
+          exit 1
+        fi
+        gh release create "v${VERSION}" \
+          --target "${GITHUB_SHA}" \
+          --title "v${VERSION}" \
+          --notes "Manual release v${VERSION} dispatched via workflow_dispatch."
+        echo "Created release v${VERSION} at ${GITHUB_SHA}"
+
+    - name: Check if a new release was created
+      id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        BEFORE_TAG: ${{ steps.before.outputs.tag }}
+        MANUAL_VERSION: ${{ inputs.manual_version }}
+      run: |
+        if [ -n "$MANUAL_VERSION" ]; then
+          echo "released=true" >> "$GITHUB_OUTPUT"
+          echo "version=${MANUAL_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Manual override release: v${MANUAL_VERSION}"
+        else
+          LATEST_TAG=$(gh api "repos/${GITHUB_REPOSITORY}/tags" --jq '.[0].name' 2>/dev/null || echo '')
+          if [ "$LATEST_TAG" != "$BEFORE_TAG" ] && [ -n "$LATEST_TAG" ]; then
+            VERSION="${LATEST_TAG#v}"
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "New release detected: ${LATEST_TAG}"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            echo "No new release."
+          fi
+        fi

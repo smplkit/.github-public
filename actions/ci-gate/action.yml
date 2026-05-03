@@ -1,0 +1,29 @@
+name: CI Gate
+description: >
+  Verify that all upstream jobs in the calling workflow succeeded. Use as the
+  single step inside a job whose `needs` lists every required CI job, with
+  `if: always()` on the calling job so this still runs when an upstream job
+  fails or is cancelled. Composite actions do not have access to the caller's
+  `needs` context, so the caller passes it explicitly via `toJson(needs)`.
+
+inputs:
+  needs:
+    description: >
+      JSON serialization of the calling job's `needs` context. Pass
+      `${{ toJson(needs) }}` from the caller.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Verify all checks passed
+      shell: bash
+      env:
+        NEEDS_JSON: ${{ inputs.needs }}
+      run: |
+        FAILED=$(printf '%s' "$NEEDS_JSON" | jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | "\(.key): \(.value.result)"] | .[]')
+        if [ -n "$FAILED" ]; then
+          echo "One or more required jobs failed or were cancelled:"
+          printf '%s\n' "$FAILED" | sed 's/^/  /'
+          exit 1
+        fi
