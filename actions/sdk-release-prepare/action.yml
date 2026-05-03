@@ -17,7 +17,9 @@ inputs:
     required: false
     default: ""
   github_token:
-    description: GitHub token with `contents: write` to create tags and releases.
+    description: >
+      GitHub token with contents-write permission so the action can create
+      tags and GitHub releases.
     required: true
 
 outputs:
