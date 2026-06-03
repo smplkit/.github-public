@@ -1,0 +1,81 @@
+name: Smoke Account
+description: >
+  Bootstrap or tear down an ephemeral smplkit account for smoke /
+  acceptance jobs. Single source of truth for the register → verify →
+  mint-API-key flow (bootstrap) and the purge flow (teardown), shared by
+  every repo that needs a throwaway account.
+
+inputs:
+  mode:
+    description: >
+      bootstrap: register an account, verify it, mint a customer API key,
+      and expose the credentials as step outputs.
+      teardown: permanently purge the account via DELETE
+      /accounts/current?purge=true.
+    required: true
+  base-url:
+    description: "App-service base URL (no trailing slash)."
+    required: false
+    default: "https://app.smplkit.com"
+  app-auth-secret:
+    description: >
+      APP_AUTH_SECRET used to mint the email-verification HMAC token.
+      Required for mode=bootstrap.
+    required: false
+    default: ""
+  account-token:
+    description: >
+      ACCOUNT_TOKEN emitted by a prior bootstrap. Required for
+      mode=teardown.
+    required: false
+    default: ""
+  email-suffix:
+    description: "Domain for the throwaway email (must not be an RFC 2606 reserved TLD)."
+    required: false
+    default: "smplkit-test.com"
+  rate-limit-bypass-token:
+    description: >
+      Optional X-Rate-Limit-Bypass token. Only used against the local
+      platform where /auth/register's 5/hour limit interferes with tight
+      CI re-runs. Leave empty against production.
+    required: false
+    default: ""
+
+outputs:
+  SMPLKIT_API_KEY:
+    description: "Customer API key minted for the ephemeral account."
+    value: ${{ steps.bootstrap.outputs.SMPLKIT_API_KEY }}
+  ACCOUNT_ID:
+    description: "The ephemeral account's id."
+    value: ${{ steps.bootstrap.outputs.ACCOUNT_ID }}
+  USER_ID:
+    description: "The ephemeral account owner's user id."
+    value: ${{ steps.bootstrap.outputs.USER_ID }}
+  ACCOUNT_TOKEN:
+    description: "A verified owner JWT for the account (pass to mode=teardown)."
+    value: ${{ steps.bootstrap.outputs.ACCOUNT_TOKEN }}
+  EMAIL:
+    description: "The throwaway email the account was registered with."
+    value: ${{ steps.bootstrap.outputs.EMAIL }}
+
+runs:
+  using: composite
+  steps:
+    - name: bootstrap ephemeral account
+      id: bootstrap
+      if: inputs.mode == 'bootstrap'
+      shell: bash
+      env:
+        SMOKE_BASE_URL: ${{ inputs.base-url }}
+        APP_AUTH_SECRET: ${{ inputs.app-auth-secret }}
+        SMOKE_EMAIL_SUFFIX: ${{ inputs.email-suffix }}
+        SMPLKIT_RATE_LIMIT_BYPASS_TOKEN: ${{ inputs.rate-limit-bypass-token }}
+      run: python3 "$GITHUB_ACTION_PATH/smoke_bootstrap.py"
+
+    - name: purge ephemeral account
+      if: always() && inputs.mode == 'teardown'
+      shell: bash
+      env:
+        SMOKE_BASE_URL: ${{ inputs.base-url }}
+        ACCOUNT_TOKEN: ${{ inputs.account-token }}
+      run: python3 "$GITHUB_ACTION_PATH/smoke_teardown.py"
